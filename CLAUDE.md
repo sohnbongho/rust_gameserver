@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 이 프로젝트의 목적
 
-이 저장소는 **`/home/bhson/00-git/csharp_gameserver` 의 C# MMO 서버를 Rust로 컨버팅**하는 프로젝트다.
+이 저장소는 **`/home/bhson/00-git/csharp` 의 C# MMO 서버를 Rust로 컨버팅**하는 프로젝트다.
 
 | | |
 |---|---|
-| 원본 (작업 기준) | `/home/bhson/00-git/csharp_gameserver` |
+| 원본 (작업 기준) | `/home/bhson/00-git/csharp` |
 | 원본 원격 저장소 | https://github.com/sohnbongho/csharp_likeactor (폴더명과 다름에 주의) |
 | 변환 대상 | 이 저장소 (https://github.com/sohnbongho/rust_gameserver) |
 

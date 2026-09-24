@@ -1,6 +1,6 @@
 # C# → Rust 변환 설계서
 
-원본: `/home/bhson/00-git/csharp_gameserver` (읽기 전용으로 취급. 해당 저장소 CLAUDE.md가 commit/push를 금지)
+원본: `/home/bhson/00-git/csharp` (읽기 전용으로 취급. 해당 저장소 CLAUDE.md가 commit/push를 금지)
 
 ## 0. 대원칙
 
