@@ -9,28 +9,28 @@
         {
             "label": "cargo build",
             "type": "shell",
-            "command": "cargo build",
+            "command": "cargo build --workspace",
             "problemMatcher": ["$rustc"],
             "group": { "kind": "build", "isDefault": true }
         },
         {
-            "label": "cargo run",
+            "label": "cargo run (game_server)",
             "type": "shell",
-            "command": "cargo run",
+            "command": "cargo run -p game_server",
             "problemMatcher": ["$rustc"],
             "group": "build"
         },
         {
             "label": "cargo clippy",
             "type": "shell",
-            "command": "cargo clippy",
+            "command": "cargo clippy --workspace --all-targets",
             "problemMatcher": ["$rustc"],
             "group": "build"
         },
         {
             "label": "cargo test",
             "type": "shell",
-            "command": "cargo test",
+            "command": "cargo test --workspace",
             "problemMatcher": ["$rustc"],
             "group": { "kind": "test", "isDefault": true }
         }

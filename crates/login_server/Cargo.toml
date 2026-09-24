@@ -1,0 +1,12 @@
+[package]
+name = "login_server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+proto.workspace = true
+net.workspace = true
+db.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true

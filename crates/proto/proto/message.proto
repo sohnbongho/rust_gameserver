@@ -1,0 +1,105 @@
+// 원본: csharp_likeactor/Scripts/message.proto (commit 89219b2) 에서 복사.
+// 와이어 계약이므로 필드 번호·타입을 원본과 다르게 바꾸지 않는다.
+
+syntax = "proto3";
+
+package Messages;
+
+message MessageWrapper {
+	int32 message_size = 1;
+	oneof payload {
+		ConnectedResponse connected_response = 10;
+		KeepAliveNoti keep_alive_noti = 11;
+		KeepAliveRequest keep_alive_request = 12;
+		EnterWorldRequest enter_world_request = 13;
+		EnterWorldResponse enter_world_response = 14;
+		LoginRequest login_request = 20;
+		LoginResponse login_response = 21;
+		ErrorResponse error_response = 22;
+		GameOverReport game_over_report = 30;
+		GameOverResponse game_over_response = 31;
+		MoveRequest move_request = 40;
+		MoveResponse move_response = 41;
+		GameConnectRequest game_connect_request = 50;
+		GameConnectResponse game_connect_response = 51;
+	}
+}
+
+// 연결 완료
+message ConnectedResponse {
+  int32 index = 1;
+}
+
+// 서버 알림
+message KeepAliveNoti {
+}
+
+// 클라이언트의 연결 유지
+message KeepAliveRequest {
+}
+
+// 월드 입장 요청 (클라이언트 → 서버)
+message EnterWorldRequest {
+    uint64 world_id = 1;
+}
+
+// 월드 입장 응답 (서버 → 클라이언트)
+message EnterWorldResponse {
+    bool success = 1;
+}
+
+// 로그인 요청 (클라이언트 → 서버)
+message LoginRequest {
+    string user_id = 1;
+    bytes password_hash = 2;  // SHA256(plaintext_password) 32바이트
+}
+
+// 로그인 응답 (서버 → 클라이언트)
+// error_code: 0=성공, 1=인증실패, 2=밴, 3=서버오류, 4=횟수제한
+message LoginResponse {
+    bool success = 1;
+    int32 error_code = 2;
+    string auth_token = 3;
+}
+
+// 게임서버 접속 요청 (클라이언트 → 게임서버)
+message GameConnectRequest {
+    string auth_token = 1;
+}
+
+// 게임서버 접속 응답 (게임서버 → 클라이언트)
+// error_code: 0=성공, 1=토큰무효, 2=서버오류
+message GameConnectResponse {
+    bool success = 1;
+    int32 error_code = 2;
+}
+
+// 서버 오류 응답
+message ErrorResponse {
+    int32 error_code = 1;
+}
+
+// 게임 종료 보고 (클라이언트 → 서버)
+message GameOverReport {
+    int32 score = 1;
+    int32 kill_count = 2;
+    int32 survive_seconds = 3;
+}
+
+// 게임 종료 응답 (서버 → 클라이언트)
+message GameOverResponse {
+    bool success = 1;
+}
+
+// 이동 요청 (클라이언트 → 서버)
+message MoveRequest {
+    float x = 1;
+    float y = 2;
+}
+
+// 이동 응답 (서버 → 클라이언트)
+message MoveResponse {
+    bool success = 1;
+    float x = 2;
+    float y = 3;
+}

@@ -1,6 +1,34 @@
-[package]
-name = "rust_gameserver"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
+# 내부 크레이트
+proto = { path = "crates/proto" }
+net = { path = "crates/net" }
+db = { path = "crates/db" }
+
+# 비동기 런타임 / 네트워크
+tokio = { version = "1.53", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1.12"
+
+# protobuf
+prost = "0.14"
+prost-build = "0.14"
+
+# DB / 캐시 — sqlx 의 macros(query!) 기능은 쓰지 않는다 (빌드 시 DB 접속 필요, docs/PORTING.md 5절)
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "mysql", "chrono"] }
+redis = { version = "1.7", features = ["tokio-comp", "connection-manager"] }
+
+# 로깅 / 설정 / 에러
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+figment = { version = "0.10", features = ["toml", "env"] }
+anyhow = "1"
+thiserror = "2"

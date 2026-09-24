@@ -50,11 +50,18 @@ commit·push 하지 않는다. 작업을 마치면 커밋되지 않은 변경 �
 ## 빌드 및 실행
 
 ```bash
-cargo build
-cargo run
+cargo build --workspace
+cargo run -p game_server      # 또는 -p login_server
+cargo test --workspace
+cargo clippy --workspace --all-targets
 ```
 
 Rust 툴체인은 rustup으로 설치되어 있다(`~/.cargo`). 새 셸에서는 `~/.bashrc`가 PATH를 잡아준다.
+
+시스템 패키지 `build-essential`(링커), `protobuf-compiler`(`crates/proto`의 `prost-build`가 호출하는 `protoc`)가 필요하다.
+
+워크스페이스 구성은 `docs/PORTING.md` 5절을 따른다. `crates/proto/proto/message.proto` 와 `sql/*.sql` 은
+원본 C# 저장소에서 복사한 파일이며, 원본이 바뀌면 다시 복사한다.
 
 ## 자격증명
 
