@@ -1,0 +1,38 @@
+{
+    // Ctrl+Shift+B → 기본 빌드 태스크(cargo build) 실행
+    "version": "2.0.0",
+    "options": {
+        // rustup 설치 전에 뜬 VSCode 서버는 PATH에 ~/.cargo/bin 이 없을 수 있다
+        "env": { "PATH": "${env:HOME}/.cargo/bin:${env:PATH}" }
+    },
+    "tasks": [
+        {
+            "label": "cargo build",
+            "type": "shell",
+            "command": "cargo build",
+            "problemMatcher": ["$rustc"],
+            "group": { "kind": "build", "isDefault": true }
+        },
+        {
+            "label": "cargo run",
+            "type": "shell",
+            "command": "cargo run",
+            "problemMatcher": ["$rustc"],
+            "group": "build"
+        },
+        {
+            "label": "cargo clippy",
+            "type": "shell",
+            "command": "cargo clippy",
+            "problemMatcher": ["$rustc"],
+            "group": "build"
+        },
+        {
+            "label": "cargo test",
+            "type": "shell",
+            "command": "cargo test",
+            "problemMatcher": ["$rustc"],
+            "group": { "kind": "test", "isDefault": true }
+        }
+    ]
+}

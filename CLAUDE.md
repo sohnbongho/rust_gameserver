@@ -33,6 +33,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 반면 C# 쪽 동시성 machinery(객체 풀, 스레드 고정, 리플렉션 디스패치, DB 워커 풀) 상당수는
 GC 회피와 `SocketAsyncEventArgs` 대응 코드라 Rust에서 재현하지 않는다.
 
+## git commit / push 금지
+
+이 저장소에서는 **`git commit` / `git push` 를 사용자가 직접 한다.** Claude는 파일 수정까지만 하고
+commit·push 하지 않는다. 작업을 마치면 커밋되지 않은 변경 사항(`git status` 기준)만 알려 준다.
+
 ## 작업 순서
 
 1. **GameServer** — 두 C# 서버는 Redis(`auth:token:*`)로만 통신하므로, Rust GameServer는
