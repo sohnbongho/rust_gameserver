@@ -19,3 +19,7 @@ target
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# 로컬 설정 (자격증명 포함 가능) — config.example.toml 만 커밋한다
+config.toml
+.env
