@@ -34,11 +34,16 @@
 
 ## 2. 작업 순서
 
-| 단계 | 대상 | 이유 |
+> **순서 변경 (2026-09-26, 사용자 결정)**: LoginServer + dummy_client 를 먼저 진행하고 GameServer 를 그 다음에 한다.
+> 아래 표는 원래 계획이며, 완료 표시는 현재 상태다.
+
+| 단계 | 대상 | 상태 |
 |---|---|---|
-| **1** | **GameServer** | 두 C# 서버는 Redis(`auth:token:*`)로만 통신 → Rust GameServer가 **살아있는 C# LoginServer와 그대로 붙는다.** 기존 C# `DummyClient`가 수정 없이 인수 테스트가 됨. 표면적도 가장 작음(핸들러 5개, 해시 없음, AdminApi 없음) |
-| 2 | LoginServer + AdminApi 7개 컨트롤러 | PBKDF2 검증, axum 필요 |
-| 3 | dummy_client (선택) | C# DummyClient로 이미 검증되므로 후순위 |
+| 1 | **LoginServer + AdminApi 7개 컨트롤러** | 구현 완료. 메모리 backend 로 TCP 통합 테스트. 실제 MySQL/Redis·C# 클라이언트와는 미검증 |
+| 2 | **dummy_client** | 구현 완료. Rust LoginServer + 가짜 GameServer 로 흐름 테스트. **실제 GameServer 구간은 미검증** — C# GameServer(9001)에 붙여 확인 필요 |
+| 3 | GameServer | 미착수. 두 C# 서버는 Redis(`auth:token:*`)로만 통신하므로 Rust LoginServer + C# GameServer, C# LoginServer + Rust GameServer 조합 모두 가능 |
+
+현재 가능한 인수 테스트: Rust LoginServer + **C# GameServer** + Rust/C# DummyClient.
 
 `Client/`(Unity)는 변환 대상 외 — C#으로 유지.
 
@@ -101,6 +106,15 @@ accept 성공 시 **즉시** `ConnectedResponse { index: 0 }` 송신. (`UserObje
 | auth token TTL | `appsettings.json`=**60초**, `CLAUDE.md`=30초 | 실제 동작값인 **60초** 채택. LoginServer 변환(2단계)까지는 C# 쪽이 발급하므로 영향 없음 |
 | 수신 채널 초과 시 | 주석="세션 강제 종료", 코드=`DropWrite`(조용히 버림) | **강제 종료** 채택. 조용한 패킷 유실은 디버깅 불가능한 버그를 만듦 |
 | tick 100ms | 메시지 처리에 최대 100ms 지연 | `select!`로 제거 (지연 감소는 관측 가능한 개선이므로 명시) |
+| LoginServer 인증 세션 해제 | `UnregisterAuthenticatedSession` 을 LoginServer 에서 아무도 호출하지 않음 → 종료된 세션이 매핑에 남아, 같은 user_id 재로그인 시 **풀에 반납되어 다른 사용자에게 재사용 중인 세션을 끊을 수 있음** | 세션 종료 시 매핑이 그 세션을 가리킬 때만 해제. 계약이 아니라 버그로 판단 |
+| LoginServer `LogoutSqlRequest` | 클래스는 있으나 LoginServer 에서 호출 안 함 (GameServer 만 호출) | 추가하지 않음. 로그인 성공 시 `last_login_at` 갱신만 유지 |
+| 로그인 DB 오류 응답 | 쿼리 예외 → `DbErrorMessage` → `ErrorResponse { error_code: 3 }` (LoginResponse 아님). Redis 토큰 저장 실패 → `LoginResponse { error_code: 3 }` | 둘을 구분해 그대로 유지. 저장된 해시/salt 가 Base64 가 아닌 경우도 C# 은 예외 → 전자로 처리 |
+| AdminApi TLS | Kestrel `UseHttps()` (개발 인증서) | `tls_cert_path`/`tls_key_path` 가 둘 다 있으면 HTTPS, 없으면 HTTP + 경고 로그 |
+| AdminApi Swagger | Swashbuckle UI | 제공하지 않음 (개발 편의 기능이지 계약이 아님) |
+| AdminApi 라우팅 | ASP.NET 은 경로 대소문자 무시, 미들웨어가 라우팅 전에 실행(없는 경로도 키 없으면 401) | axum 은 경로 대소문자 구분, 없는 경로는 404. JSON 속성명은 camelCase 출력 + PascalCase 입력 허용 |
+| DummyClient 비밀번호 | 시드는 `Seeder:Password`, 로그인은 `"Test1234!"` 하드코딩 | 둘 다 `dummy_client.password` 하나로 |
+| DummyClient 접속 실패 | 로그인서버 접속 예외가 루프 밖으로 나가 이후 접속을 중단 | 동일하게 중단하되 에러 로그 후 이미 접속한 클라이언트는 계속 유지 |
+| 로그인 PBKDF2 실행 위치 | SQL 워커 스레드(32개)에서 실행 → 사실상 동시 32개 상한 | `spawn_blocking` + 코어 수 크기의 `Semaphore` |
 
 ## 5. 워크스페이스 구성
 
@@ -112,8 +126,9 @@ crates/
   proto/              # prost-build (build.rs) + message.proto
   net/                # codec, session id, config, tracing, packet stats(AtomicU64), timer
   db/                 # sqlx MySqlPool, redis ConnectionManager
-  game_server/        # 1단계
-  login_server/       # 2단계
+  game_server/        # 3단계 (미착수)
+  login_server/       # LoginServer + AdminApi (lib + bin, tests/ 에 통합 테스트)
+  dummy_client/       # 부하·인수 테스트 클라이언트 (lib + bin)
 docs/PORTING.md
 sql/                  # 스키마 복사본
 ```
@@ -135,9 +150,13 @@ C# `appsettings.json`에 MySQL 비밀번호가 **평문으로 커밋되어 있�
 
 자체 인코더로 라운드트립하는 테스트는 와이어 호환성을 증명하지 못한다. 실제로 판별력 있는 항목:
 
-- [ ] 디코더에 **1바이트씩** 흘려넣기 (partial header / partial body)
-- [ ] **한 버퍼에 2개 메시지**를 동시에 넣기 (C#의 버퍼 압축 로직이 존재하는 이유)
-- [ ] 본문 크기 `0`, `8191` 거부
-- [ ] 인증 전 게이팅: 허용 2종 외 → 종료
-- [ ] KeepAlive 3초 송신 / 10초 타임아웃
+- [x] 디코더에 **1바이트씩** 흘려넣기 (partial header / partial body) — `net::codec` 단위 테스트
+- [x] **한 버퍼에 2개 메시지**를 동시에 넣기 (C#의 버퍼 압축 로직이 존재하는 이유)
+- [x] 본문 크기 `0`, `8191` 거부
+- [x] 인증 전 게이팅: 허용 2종 외 → 종료 (LoginServer: `LoginRequest`/`KeepAliveRequest`)
+- [x] KeepAlive 3초 송신(dummy_client) / 10초 타임아웃(LoginServer, 인증 후만)
+- [x] PBKDF2-HMAC-SHA256 을 RFC 7914 테스트 벡터로 확인 (C# 가 만든 해시로 교차 검증은 아직)
+- [ ] 실제 MySQL 의 C# 시드 계정으로 Rust LoginServer 로그인 (PBKDF2 호환성 최종 확인)
+- [ ] Rust LoginServer + C# GameServer + C# DummyClient
+- [ ] Rust dummy_client + C# LoginServer/GameServer
 - [ ] **C# DummyClient를 수정 없이 Rust GameServer에 붙여 통과** ← 최종 인수 조건
