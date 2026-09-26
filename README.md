@@ -1,5 +1,29 @@
 # rust_gameserver
 
+C# MMO 서버([csharp_likeactor](https://github.com/sohnbongho/csharp_likeactor))를 Rust 로 컨버팅하는 프로젝트.
+C# ↔ Rust 대응과 고정된 외부 계약은 [`docs/PORTING.md`](docs/PORTING.md) 에 있다.
+설계 문서 목차·갱신 규칙·남은 검증 항목은 [`docs/README.md`](docs/README.md) 를 본다.
+
+## 크레이트
+
+| 크레이트 | 종류 | 설명 | 문서 |
+|---|---|---|---|
+| `login_server` | 바이너리 + lib | LoginServer(TCP 9000) + AdminApi(HTTP 9010). 로그인 후 GameServer 용 1회용 토큰 발급 | [README](crates/login_server/README.md) |
+| `game_server` | 바이너리 + lib | GameServer(TCP 9001). 토큰 인증, 이동·월드 입장·점수 보고 | [README](crates/game_server/README.md) |
+| `dummy_client` | 바이너리 + lib | 부하·인수 테스트 클라이언트, `--seed` 테스트 계정 생성, 키보드 이동 | [README](crates/dummy_client/README.md) |
+| `net` | lib | 와이어 프레이밍 codec, 수락 루프·플러드 밴, 송신 outbox, 세션 레지스트리, 설정·모니터 | [README](crates/net/README.md) |
+| `db` | lib | MySQL 풀·Redis 매니저(지연 연결), 비밀번호 해시, 공지 Pub/Sub, `[database]` 설정 | [README](crates/db/README.md) |
+| `proto` | lib | `message.proto`(원본에서 복사)와 prost 생성 타입 | [README](crates/proto/README.md) |
+
+```mermaid
+flowchart TD
+    ls["login_server"] --> net & db & proto
+    gs["game_server"] --> net & db & proto
+    dc["dummy_client"] --> net & db & proto
+    net --> proto
+    ls <-.->|"Redis auth:token:*"| gs
+```
+
 ## 개발 환경
 
 ### 설치한 Claude Code 스킬
