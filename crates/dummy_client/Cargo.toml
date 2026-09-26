@@ -18,3 +18,4 @@ crossterm.workspace = true
 
 [dev-dependencies]
 login_server = { path = "../login_server" }
+game_server = { path = "../game_server" }

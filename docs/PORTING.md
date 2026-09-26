@@ -40,7 +40,7 @@
 | 단계 | 대상 | 상태 |
 |---|---|---|
 | 1 | **LoginServer + AdminApi 7개 컨트롤러** | 구현 완료. 메모리 backend 로 TCP 통합 테스트. 실제 MySQL/Redis·C# 클라이언트와는 미검증 |
-| 2 | **dummy_client** | 구현 완료. Rust LoginServer + 가짜 GameServer 로 흐름 테스트. **실제 GameServer 구간은 미검증** — C# GameServer(9001)에 붙여 확인 필요 |
+| 2 | **dummy_client** | 구현 완료. 실제 Rust LoginServer + Rust GameServer(메모리 backend, 토큰 저장소 공유)로 흐름 테스트. 실제 Redis/MySQL 로도 5명 접속 확인. **C# 서버와의 조합은 미검증** |
 | 3 | **GameServer** | 구현 완료. 메모리 backend 로 TCP 통합 테스트(`crates/game_server/tests/game_flow.rs`). 실제 Redis/MySQL + Rust LoginServer + Rust dummy_client 로 인증·KeepAlive·종료 기록 확인. **C# DummyClient, `scores` INSERT 는 실환경 미검증** |
 
 현재 가능한 인수 테스트: Rust LoginServer + Rust GameServer + Rust/C# DummyClient. 두 서버는 Redis(`auth:token:*`)로만

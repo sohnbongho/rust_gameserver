@@ -314,3 +314,48 @@ WARN login_server::session: 수신 오류, 세션 종료 session_id=1 error=유�
 
 이미 포워딩된 포트는 하단 **PORTS** 패널에서 우클릭 → **Stop Forwarding** 후 서버를 다시 띄운다.
 WSL2 는 `localhost` 를 Windows 로 전달하므로 꺼도 Windows 쪽 C# 클라이언트 접속에는 영향이 없다.
+
+## 테스트
+
+모든 테스트는 **MySQL/Redis 없이** 돌아간다. 서버는 메모리 backend 를 주입해 실제 TCP 소켓으로 띄운다.
+
+```bash
+cargo test --workspace                    # 전체 (약 10초)
+cargo test -p login_server                # 크레이트 하나만
+cargo test -p game_server --test game_flow                        # 통합 테스트 파일 하나만
+cargo test -p game_server keep_alive                              # 이름에 keep_alive 가 들어간 테스트만
+cargo test -p login_server --test login_flow -- --nocapture       # println!/eprintln! 출력 보기 (서버 tracing 로그는 테스트에서 초기화하지 않아 나오지 않는다)
+cargo clippy --workspace --all-targets    # 린트 (경고 0 유지)
+cargo fmt --all                           # 포맷
+```
+
+| 크레이트 | 테스트 | 검증 내용 | 소요 |
+|---|---|---|---|
+| `net` | 단위 (`src/`) | codec 경계(1바이트씩, 한 버퍼 2개, 길이 0·8191 거부), 플러드 밴, 세션 레지스트리 | 즉시 |
+| `db` | 단위 (`src/password.rs`) | SHA256·PBKDF2 테스트 벡터, 해시 생성·검증 | 즉시 |
+| `proto` | `tests/generated.rs` | 생성 타입의 실제 와이어 바이트 | 즉시 |
+| `login_server` | `tests/login_flow.rs` | 로그인 코드 0~4, 인증 전 게이팅, 중복 로그인 킥, DB/Redis 오류 구분, KeepAlive 타임아웃 | 약 4초 |
+| `login_server` | `tests/admin_api.rs` | 세션 키 요구, 관리자 로그인, DB/Redis 없을 때 `degraded` | 약 10초 (연결 타임아웃 대기) |
+| `game_server` | 단위 + `tests/game_flow.rs` | 토큰 1회용·`:` 포함 user_id, Redis 오류 → `ErrorResponse 3`, 이동 에코, 점수 저장, 로그아웃 재시도, KeepAlive | 약 4초 |
+| `dummy_client` | `tests/end_to_end.rs` | 실제 LoginServer + GameServer(토큰 저장소 공유)로 로그인 → 인증 → KeepAlive → 종료 집계 | 약 5초 |
+
+크레이트별 테스트 설명은 각 `crates/*/README.md` 의 "테스트" 절에 있다.
+
+### 실제 MySQL/Redis 로 확인
+
+자동 테스트는 메모리 backend 만 쓰므로, 실제 저장소와 C# 호환성은 서버를 띄워서 확인한다.
+
+```bash
+cargo ls                                        # 터미널 1
+cargo gs                                        # 터미널 2
+APP_DUMMY_CLIENT__MAX_CLIENT_COUNT=5 cargo dc   # 터미널 3 → [모니터] 게임서버: 5명 | 연결끊김: 0명 이면 정상
+```
+
+아직 남은 인수 검증(C# DummyClient → Rust GameServer 등)은 [`docs/README.md`](docs/README.md) 를 본다.
+
+### 테스트 작성 시 주의
+
+- **KeepAlive 처럼 시간이 걸린 동작은 실제 시간 + 짧은 타임아웃**(`SessionContext::with_keep_alive_timeout`)으로 검사한다.
+  `#[tokio::test(start_paused = true)]` 정지 시계는 실제 소켓 I/O·`spawn_blocking` 을 기다리는 동안에도 시간을 건너뛰어
+  타임아웃이 먼저 터진다. 소켓이 없는 순수 로직(예: 로그아웃 재시도 백오프)에만 쓴다.
+- 자체 인코더로 왕복하는 테스트는 C# 호환성을 증명하지 못한다. 와이어 바이트는 직접 만든 바이트로 검사한다.

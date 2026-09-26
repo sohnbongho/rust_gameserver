@@ -11,7 +11,7 @@ C# `DummyClient` 를 대체하는 부하·인수 테스트용 더미 클라이�
 cargo dc -- --seed                               # 테스트 계정 user_00001.. 생성 후 종료
 APP_DUMMY_CLIENT__MAX_CLIENT_COUNT=5 cargo dc    # 5명 접속 (기본 10000명)
 RUST_LOG=dummy_client=debug cargo dc             # [이동] / [MoveResponse] 까지 출력
-cargo test -p dummy_client                       # Rust LoginServer + 가짜 GameServer 로 흐름 테스트
+cargo test -p dummy_client                       # 실제 Rust LoginServer + GameServer 로 흐름 테스트
 ```
 
 ## 프로젝트 구조
@@ -27,7 +27,7 @@ crates/dummy_client/
 │   ├── keyboard.rs    # 터미널 raw 모드 키 입력 → 첫 번째 클라이언트 이동, Q/Ctrl+C 종료
 │   └── seeder.rs      # --seed: accounts 테이블 생성 + user_00001.. 계정 INSERT IGNORE
 └── tests/
-    └── end_to_end.rs  # Rust LoginServer(메모리 backend) + 가짜 GameServer 로 흐름 검증
+    └── end_to_end.rs  # 실제 Rust LoginServer + GameServer(메모리 backend) 로 흐름 검증
 ```
 
 ### 모듈 역할
@@ -47,7 +47,7 @@ crates/dummy_client/
 | `proto` | `MessageWrapper` 등 (와이어 계약) |
 | `net` | 2바이트 길이 프레이밍 codec, `KEEP_ALIVE_INTERVAL`(3초), 설정 로더 |
 | `db` | `SHA256(비밀번호)` 클라이언트 해시, `--seed` 의 MySQL 풀과 PBKDF2 저장 해시 생성 |
-| `login_server` (dev) | 통합 테스트에서 실제 LoginServer 를 띄우는 데만 사용 |
+| `login_server`, `game_server` (dev) | 통합 테스트에서 실제 두 서버를 띄우는 데만 사용 |
 
 ## 실행 구조
 
@@ -150,10 +150,22 @@ flowchart TD
 
 ## 테스트
 
-`tests/end_to_end.rs` 는 실제 Rust LoginServer(메모리 backend)와, C# GameServer 의 핸드셰이크
-(`ConnectedResponse` → `GameConnectRequest` → `GameConnectResponse`)만 흉내 내는 가짜 GameServer 를 띄운다.
+`tests/end_to_end.rs` 는 실제 Rust LoginServer 와 GameServer 를 띄운다. MySQL/Redis 대신 메모리 backend 를 쓰되,
+두 서버가 **토큰 저장소 하나를 공유**한다 (Redis `auth:token:*` 대역). LoginServer 가 넣은 `"{account_id}:{user_id}"`
+값을 GameServer 가 꺼내 해석하므로 서버 간 계약도 함께 검증된다.
 
-- `login_then_game_server_handshake_and_keep_alive` — 로그인 → 토큰 전달 → 게임서버 인증 → KeepAlive 송신
-- `login_failure_stays_connected_until_shutdown` — 로그인 실패 시 연결을 유지하다가 종료 신호에 끝남
+```mermaid
+flowchart LR
+    dc["client::run"] -->|LoginRequest| ls["login_server::serve<br/>(LoginMemory)"]
+    ls -->|토큰 발급| store[("공유 TokenStore<br/>HashMap")]
+    dc -->|GameConnectRequest| gs["game_server::serve<br/>(GameMemory, 타임아웃 4초)"]
+    gs -->|토큰 꺼내기 + 삭제| store
+```
 
-실제 GameServer 와의 조합은 테스트가 아니라 `cargo ls` + `cargo gs` + `cargo dc` 실행으로 확인한다.
+- `login_then_game_server_authentication_and_keep_alive` — 로그인 → 토큰 → GameServer 인증(레지스트리에 `user_00001`),
+  토큰 1회용 소비, KeepAlive(3초)가 단축된 GameServer 타임아웃(4초)보다 오래 세션 유지, 종료 시 `last_login_at` 기록
+- `game_server_shutdown_counts_as_game_phase_disconnect` — GameServer 가 끊으면 `Disconnected(GameServer)`, 카운터 `(0, 0, 1)`
+- `game_server_down_counts_as_disconnect` — GameServer 포트가 닫혀 있으면 `GameConnectFailed`, 연결끊김으로 집계
+- `login_failure_stays_connected_until_shutdown` — 로그인 실패 시 연결을 유지하다가 종료 신호에 끝남, 토큰 미발급
+
+C# 서버와의 조합과 실제 MySQL/Redis 는 테스트가 아니라 `cargo ls` + `cargo gs` + `cargo dc` 실행으로 확인한다.

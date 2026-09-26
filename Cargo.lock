@@ -526,6 +526,7 @@ dependencies = [
  "crossterm",
  "db",
  "futures",
+ "game_server",
  "login_server",
  "net",
  "proto",
