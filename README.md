@@ -117,6 +117,96 @@ cargo dc -- --seed          # 테스트 계정 user_00001.. 생성 후 종료
 MySQL/Redis 는 지연 연결이라 없어도 서버는 뜬다. 이때 로그인은 `ErrorResponse { error_code: 3 }`,
 `/api/health` 는 `degraded` 를 돌려준다.
 
+### LoginServer 실행
+
+```bash
+cargo ls                                  # 게임 클라이언트 TCP 9000 + AdminApi HTTP 9010
+RUST_LOG=login_server=debug cargo ls      # 세션 접속/종료 등 상세 로그
+```
+
+설정은 `config.toml` 의 `[login_server]` / `[login_server.admin_api]` (생략 시 기본값). 환경변수 예: `APP_LOGIN_SERVER__PORT=9100`,
+`APP_LOGIN_SERVER__ADMIN_API__ENABLED=false`. `auth_token_prefix` 는 GameServer 와 같아야 한다.
+
+정상 기동 로그:
+
+```
+INFO login_server::admin: AdminApi 시작: http://localhost:9010/api/health
+INFO login_server: LoginServer Start Listen Port:9000...
+INFO db::broadcast: Redis Pub/Sub 구독 시작 channel=server:notice
+INFO net::monitor: [모니터] 동접: 0명 | CPU: 0.0% | ...   # 10초마다
+```
+
+TLS 인증서를 지정하지 않으면 `AdminApi TLS 미설정 — HTTP 로 연다` 경고가 함께 나온다 (로컬 개발에서는 정상).
+
+- 클라이언트 흐름: 접속 → `ConnectedResponse` → `LoginRequest { user_id, password_hash }` → `LoginResponse { auth_token }`.
+  토큰은 Redis `auth:token:{token}` 에 `"{account_id}:{user_id}"` 로 60초 저장되고, 클라이언트는 이 토큰으로 GameServer 에 붙는다.
+- `LoginResponse.error_code`: 0=성공, 1=계정 없음/비밀번호 불일치, 2=밴, 3=서버 오류(토큰 저장 실패), 4=시도 횟수 초과(1분 5회).
+  계정 조회 등 DB 오류는 `ErrorResponse { error_code: 3 }` 로 따로 온다.
+- 인증 전에는 `LoginRequest`/`KeepAliveRequest` 외 메시지를 받으면 끊고, 인증 후 KeepAlive 가 10초 없으면 끊는다.
+
+#### AdminApi (9010)
+
+`/api/health`, `/api/auth/login` 외에는 로그인으로 받은 키를 `X-Session-Key` 헤더에 넣어야 한다.
+관리자 계정은 `[login_server.admin_api].admins` 에 있는 `accounts.user_id` 만 가능하다.
+
+```bash
+curl http://127.0.0.1:9010/api/health                    # {"status":"ok","db":"ok","redis":"ok"}
+
+KEY=$(curl -s -X POST http://127.0.0.1:9010/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"user_00001","password":"Test1234!"}' | sed 's/.*"sessionKey":"\([^"]*\)".*/\1/')
+
+curl -H "X-Session-Key: $KEY" http://127.0.0.1:9010/api/sessions          # 접속 세션 목록
+curl -H "X-Session-Key: $KEY" http://127.0.0.1:9010/api/stats             # 동접·CPU·메모리
+curl -H "X-Session-Key: $KEY" 'http://127.0.0.1:9010/api/scores/top?limit=10'
+curl -H "X-Session-Key: $KEY" 'http://127.0.0.1:9010/api/scores?accountId=1&limit=50'
+curl -X POST -H "X-Session-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"message":"점검 공지"}' http://127.0.0.1:9010/api/notice            # 모든 서버 로그에 [공지 수신]
+curl -X POST -H "X-Session-Key: $KEY" http://127.0.0.1:9010/api/sessions/1/disconnect
+curl -X POST -H "X-Session-Key: $KEY" http://127.0.0.1:9010/api/auth/logout
+```
+
+`/api/sessions`, `/disconnect` 는 **LoginServer 에 접속한 세션**만 대상으로 한다 (GameServer 세션은 보이지 않는다).
+
+| 로그 | 의미 |
+|---|---|
+| `포트 9000 바인드 실패` / `AdminApi 포트 9010 바인드 실패` | 이미 LoginServer(또는 C# LoginServer)가 떠 있다 |
+| `유효하지 않은 메시지 크기: 17735` | 9000 에 HTTP 요청이 들어왔다 — 아래 "자동 포트 포워딩 끄기" 참고 |
+| `계정 조회 실패` / `last_login_at 갱신 실패` | MySQL 연결 문제 → 클라이언트는 `ErrorResponse { error_code: 3 }` |
+| `인증 토큰 발급 실패` | Redis 연결 문제 → `LoginResponse { error_code: 3 }` |
+| `중복 로그인, 기존 세션 종료` | 같은 계정이 다시 로그인해 이전 세션을 끊었다 |
+
+### GameServer 실행
+
+```bash
+cargo gs                                  # TCP 9001
+RUST_LOG=game_server=debug cargo gs       # 세션 접속/종료 등 상세 로그
+```
+
+`config.toml` 의 `[game_server]` 섹션은 생략해도 된다 (기본값 `port = 9001`, `auth_token_prefix = "auth:token:"`).
+환경변수로는 `APP_GAME_SERVER__PORT=9101` 처럼 바꾼다. `auth_token_prefix` 는 LoginServer 와 같아야 한다.
+
+정상 기동 로그:
+
+```
+INFO game_server: GameServer Start Listen Port:9001...
+INFO db::broadcast: Redis Pub/Sub 구독 시작 channel=server:notice
+INFO net::monitor: [모니터] 동접: 5명 | CPU: 0.0% | 메모리: 14MB | 수신: 20패킷/10s | 송신: 0패킷/10s   # 10초마다
+```
+
+- 클라이언트 흐름: 접속 → `ConnectedResponse` → `GameConnectRequest { auth_token }` → `GameConnectResponse`.
+  토큰은 LoginServer 가 Redis `auth:token:*` 에 넣은 1회용 값이며, GameServer 가 인증하면서 지운다 (TTL 60초).
+- 인증 후 KeepAlive 가 10초 없으면 `KeepAlive 타임아웃 세션 종료`, 같은 계정이 다시 들어오면 기존 세션을 끊는다.
+- 연결 종료 시 `accounts.last_login_at` 을 갱신하고, `GameOverReport` 는 `scores` 에 저장한다.
+- `Ctrl+C` 로 종료하면 `Stop GameServer` 후 모든 세션을 닫는다.
+
+| 로그 | 의미 |
+|---|---|
+| `포트 9001 바인드 실패` | 이미 GameServer(또는 C# GameServer)가 떠 있다 |
+| `인증 전 허용되지 않은 메시지, 세션 종료` | 인증 전 `GameConnectRequest`/`KeepAliveRequest` 외 메시지 — 원본과 같은 차단 |
+| `인증 토큰 조회 실패` | Redis 연결 문제 → 클라이언트는 `ErrorResponse { error_code: 3 }` |
+| `로그아웃 기록 실패` | MySQL 연결 문제 — 500ms 부터 최대 30초 간격으로 재시도 |
+
 ### dummy_client 로 접속 확인
 
 `cargo ls`(9000)와 `cargo gs`(9001)를 각각 띄워 둔 채 다른 터미널에서 실행한다. 테스트 계정이 없으면 먼저 `cargo dc -- --seed`.
