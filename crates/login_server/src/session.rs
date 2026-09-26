@@ -1,32 +1,28 @@
 //! 접속 1개 = tokio task 1개. task 가 세션 상태를 소유하므로 락이 없다 (C# `UserSession` 액터 대응).
-//!
-//! 송신은 별도 writer task 로 분리하고 그 사이 큐를 `MAX_SEND_QUEUE_SIZE` 로 제한한다 —
-//! 느린 클라이언트가 세션 루프를 막지 않고, 큐가 넘치면 원본처럼 세션을 끊는다.
+//! 송신은 `net::outbox` 의 writer task 가 맡는다.
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use net::MessageCodec;
-use net::consts::{KEEP_ALIVE_TIMEOUT, MAX_MESSAGE_CHANNEL_CAPACITY, MAX_SEND_QUEUE_SIZE};
+use net::consts::{KEEP_ALIVE_TIMEOUT, MAX_MESSAGE_CHANNEL_CAPACITY};
+use net::outbox::{Outbox, sleep_until_opt};
+use net::registry::SessionRegistry;
 use proto::message_wrapper::Payload;
 use proto::{ConnectedResponse, ErrorResponse, LoginResponse, MessageWrapper};
 use tokio::net::TcpStream;
-use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::{Semaphore, mpsc};
 use tokio::time::Instant;
-use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_util::codec::FramedRead;
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::Backend;
-use crate::registry::SessionRegistry;
 
 /// 로그인 시도 제한: 1분에 5회.
 const LOGIN_ATTEMPTS_PER_WINDOW: u32 = 5;
 const LOGIN_ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
-/// 세션 종료 시 남은 송신 큐를 비울 때까지 기다리는 최대 시간.
-const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// `LoginResponse.error_code` (C# `LoginErrorCode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +42,8 @@ const DB_ERROR_CODE: i32 = 3;
 pub struct SessionContext {
     pub backend: Arc<dyn Backend>,
     pub registry: SessionRegistry,
+    /// 인증 후 KeepAlive 타임아웃. 계약값은 `KEEP_ALIVE_TIMEOUT`(10초) — 테스트만 `with_keep_alive_timeout` 으로 줄인다.
+    keep_alive_timeout: Duration,
     /// PBKDF2 동시 실행 제한. C# 은 SQL 워커 수(32)가 사실상 상한이었다.
     hash_limiter: Semaphore,
 }
@@ -57,7 +55,13 @@ impl SessionContext {
             backend,
             registry: SessionRegistry::default(),
             hash_limiter: Semaphore::new(permits),
+            keep_alive_timeout: KEEP_ALIVE_TIMEOUT,
         }
+    }
+
+    pub fn with_keep_alive_timeout(mut self, timeout: Duration) -> Self {
+        self.keep_alive_timeout = timeout;
+        self
     }
 }
 
@@ -68,18 +72,13 @@ pub async fn run(stream: TcpStream, ctx: Arc<SessionContext>, shutdown: Cancella
     ctx.registry.register(session_id, kick.clone());
 
     let (read_half, write_half) = stream.into_split();
-    let (send_tx, send_rx) = mpsc::channel(MAX_SEND_QUEUE_SIZE);
-    let writer = tokio::spawn(write_loop(
-        FramedWrite::new(write_half, MessageCodec),
-        send_rx,
-        kick.clone(),
-    ));
+    let (outbox, writer) = net::outbox::spawn(session_id, write_half, kick.clone());
 
     let (inner_tx, inner_rx) = mpsc::channel(MAX_MESSAGE_CHANNEL_CAPACITY);
     let mut session = Session {
         session_id,
         ctx: ctx.clone(),
-        send_tx,
+        outbox,
         inner_tx,
         account: None,
         last_keep_alive: Instant::now(),
@@ -92,38 +91,8 @@ pub async fn run(stream: TcpStream, ctx: Arc<SessionContext>, shutdown: Cancella
         .await;
 
     ctx.registry.remove(session_id);
-    drop(session); // send_tx 를 닫아 writer 가 남은 큐를 비우고 끝나게 한다
-    let mut writer = writer;
-    if tokio::time::timeout(WRITER_DRAIN_TIMEOUT, &mut writer)
-        .await
-        .is_err()
-    {
-        writer.abort();
-    }
+    writer.close(session.outbox).await;
     tracing::debug!(session_id, "세션 종료");
-}
-
-async fn write_loop(
-    mut sink: FramedWrite<OwnedWriteHalf, MessageCodec>,
-    mut rx: mpsc::Receiver<MessageWrapper>,
-    kick: CancellationToken,
-) {
-    let result: Result<(), net::CodecError> = async {
-        while let Some(message) = rx.recv().await {
-            sink.feed(message).await?;
-            while let Ok(message) = rx.try_recv() {
-                sink.feed(message).await?;
-            }
-            sink.flush().await?;
-        }
-        Ok(())
-    }
-    .await;
-
-    if let Err(e) = result {
-        tracing::info!(error = %e, "Send Error");
-        kick.cancel();
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -142,16 +111,13 @@ enum LoginOutcome {
 struct Session {
     session_id: u64,
     ctx: Arc<SessionContext>,
-    send_tx: mpsc::Sender<MessageWrapper>,
+    outbox: Outbox,
     inner_tx: mpsc::Sender<LoginOutcome>,
     account: Option<Account>,
     last_keep_alive: Instant,
     login_window: Option<Instant>,
     login_attempts: u32,
 }
-
-/// 송신 큐가 넘쳐 세션을 끊어야 한다.
-struct SendQueueFull;
 
 impl Session {
     async fn event_loop(
@@ -161,6 +127,7 @@ impl Session {
         kick: &CancellationToken,
     ) {
         if self
+            .outbox
             .send(Payload::ConnectedResponse(ConnectedResponse { index: 0 }))
             .is_err()
         {
@@ -172,7 +139,7 @@ impl Session {
             let keep_alive_deadline = self
                 .account
                 .as_ref()
-                .map(|_| self.last_keep_alive + KEEP_ALIVE_TIMEOUT);
+                .map(|_| self.last_keep_alive + self.ctx.keep_alive_timeout);
 
             let flow = tokio::select! {
                 biased;
@@ -293,30 +260,7 @@ impl Session {
     }
 
     fn send_flow(&self, payload: Payload) -> ControlFlow<()> {
-        match self.send(payload) {
-            Ok(()) => ControlFlow::Continue(()),
-            Err(SendQueueFull) => ControlFlow::Break(()),
-        }
-    }
-
-    fn send(&self, payload: Payload) -> Result<(), SendQueueFull> {
-        let message = MessageWrapper {
-            message_size: 0,
-            payload: Some(payload),
-        };
-        match self.send_tx.try_send(message) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                tracing::warn!(
-                    session_id = self.session_id,
-                    max = MAX_SEND_QUEUE_SIZE,
-                    "송신 큐 초과, 세션 강제 종료"
-                );
-                Err(SendQueueFull)
-            }
-            // writer 가 이미 오류로 끝났다 — kick 이 취소되어 곧 루프가 끝난다
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(SendQueueFull),
-        }
+        self.outbox.send_flow(payload)
     }
 }
 
@@ -383,12 +327,5 @@ async fn authenticate(ctx: &SessionContext, user_id: &str, client_hash: Vec<u8>)
             user_id: row.user_id,
         },
         token,
-    }
-}
-
-async fn sleep_until_opt(deadline: Option<Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline).await,
-        None => std::future::pending().await,
     }
 }

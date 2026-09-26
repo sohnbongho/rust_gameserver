@@ -1,15 +1,11 @@
-//! LoginServer + AdminApi (2단계). C# `LoginServer` 를 대체한다.
+//! GameServer (3단계). C# `GameServer` 를 대체한다.
 //!
-//! 클라이언트 흐름: 접속 → `ConnectedResponse` → `LoginRequest` → `LoginResponse { auth_token }`
-//! → 클라이언트가 그 토큰으로 GameServer 에 접속한다. 두 서버는 Redis `auth:token:*` 로만 통신한다.
+//! 클라이언트 흐름: 접속 → `ConnectedResponse` → `GameConnectRequest { auth_token }` (LoginServer 가 발급,
+//! Redis `auth:token:*` 에서 1회용으로 꺼냄) → `GameConnectResponse` → KeepAlive·이동·월드 입장·점수 보고.
 
-pub mod admin;
 pub mod backend;
 pub mod config;
 pub mod session;
-
-/// AdminApi·테스트가 쓰던 경로 유지 — 구현은 GameServer 와 공유하는 `net::registry`.
-pub use net::registry;
 
 use std::sync::Arc;
 

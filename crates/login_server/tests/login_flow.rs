@@ -107,10 +107,17 @@ impl Drop for TestServer {
 }
 
 async fn start(backend: FakeBackend) -> TestServer {
+    start_with(backend, |ctx| ctx).await
+}
+
+async fn start_with(
+    backend: FakeBackend,
+    configure: impl FnOnce(SessionContext) -> SessionContext,
+) -> TestServer {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let backend = Arc::new(backend);
-    let ctx = Arc::new(SessionContext::new(backend.clone()));
+    let ctx = Arc::new(configure(SessionContext::new(backend.clone())));
     let shutdown = CancellationToken::new();
     tokio::spawn(login_server::serve(listener, ctx.clone(), shutdown.clone()));
     TestServer {
@@ -330,27 +337,36 @@ async fn admin_disconnect_closes_session() {
     assert!(!server.ctx.registry.disconnect(u64::MAX));
 }
 
-#[tokio::test(start_paused = true)]
+/// 실제 시간으로 돌리고 타임아웃만 줄인다. 정지 시계(`start_paused`)는 실제 소켓 I/O 나 `spawn_blocking`(PBKDF2)을
+/// 기다리는 동안에도 다음 타이머로 시간을 건너뛰어, KeepAlive 가 서버에 읽히기 전에 타임아웃이 터진다.
+const TEST_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_millis(500);
+
+#[tokio::test]
 async fn keep_alive_timeout_only_after_authentication() {
-    let server = start(FakeBackend::with_accounts()).await;
+    let server = start_with(FakeBackend::with_accounts(), |ctx| {
+        ctx.with_keep_alive_timeout(TEST_KEEP_ALIVE_TIMEOUT)
+    })
+    .await;
     let mut client = connect(server.addr).await;
 
-    // 인증 전에는 아무리 오래 조용해도 끊지 않는다
-    tokio::time::sleep(Duration::from_secs(60)).await;
+    // 인증 전에는 타임아웃보다 오래 조용해도 끊지 않는다
+    tokio::time::sleep(TEST_KEEP_ALIVE_TIMEOUT * 3).await;
     login_ok(&mut client, "user_00001").await;
 
-    // 인증 후 KeepAlive 를 보내는 동안은 유지
-    for _ in 0..5 {
-        tokio::time::sleep(Duration::from_secs(3)).await;
+    // 인증 후 KeepAlive 를 보내는 동안은 타임아웃의 몇 배가 지나도 유지
+    for _ in 0..15 {
+        tokio::time::sleep(TEST_KEEP_ALIVE_TIMEOUT / 5).await;
         send(&mut client, Payload::KeepAliveRequest(KeepAliveRequest {})).await;
     }
     send(&mut client, login_request("user_00001", PASSWORD)).await;
     assert_eq!(recv(&mut client).await, login_failure(1));
 
-    // 10초 넘게 조용하면 끊는다. 정지 시계 + 실제 소켓 조합에서는 자동 전진이 타이머 휠 슬롯 단위로
-    // 뛰어 상한이 부정확하므로(실시간 실행 시 9~11초 확인) 하한만 본다.
+    // 조용해지면 마지막 KeepAlive 로부터 타임아웃 뒤에 끊는다
     let started = tokio::time::Instant::now();
     assert_eq!(recv(&mut client).await, None);
     let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_secs(9), "{elapsed:?}");
+    assert!(
+        elapsed >= TEST_KEEP_ALIVE_TIMEOUT * 4 / 5 && elapsed < TEST_KEEP_ALIVE_TIMEOUT * 4,
+        "{elapsed:?}"
+    );
 }

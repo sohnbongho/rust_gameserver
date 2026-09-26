@@ -72,7 +72,7 @@ cargo ls              # 다른 터미널에서
 curl http://127.0.0.1:9010/api/health
 # → {"status":"ok","db":"ok","redis":"ok"}
 
-APP_DUMMY_CLIENT__MAX_CLIENT_COUNT=5 cargo dc   # 로그인 확인 (GameServer 가 없으면 이후 "게임서버 접속 실패" 는 정상)
+APP_DUMMY_CLIENT__MAX_CLIENT_COUNT=5 cargo dc   # 로그인 확인 (`cargo gs` 를 안 띄웠으면 이후 "게임서버 접속 실패" 는 정상)
 redis-cli --scan --pattern 'auth:token:*'       # 발급된 토큰 (TTL 60초)
 ```
 
@@ -119,10 +119,12 @@ MySQL/Redis 는 지연 연결이라 없어도 서버는 뜬다. 이때 로그인
 
 ### dummy_client 로 접속 확인
 
-`cargo ls` 를 띄워 둔 채 다른 터미널에서 실행한다. 테스트 계정이 없으면 먼저 `cargo dc -- --seed`.
+`cargo ls`(9000)와 `cargo gs`(9001)를 각각 띄워 둔 채 다른 터미널에서 실행한다. 테스트 계정이 없으면 먼저 `cargo dc -- --seed`.
 
 ```bash
-APP_DUMMY_CLIENT__MAX_CLIENT_COUNT=5 cargo dc   # 기본 10000명이라 처음엔 줄여서
+cargo ls                                        # 터미널 1
+cargo gs                                        # 터미널 2
+APP_DUMMY_CLIENT__MAX_CLIENT_COUNT=5 cargo dc   # 터미널 3 — 기본 10000명이라 처음엔 줄여서
 ```
 
 - 각 클라이언트는 LoginServer(9000) 로그인 → 받은 토큰으로 GameServer(9001) 접속 순서로 진행한다.
@@ -133,16 +135,18 @@ APP_DUMMY_CLIENT__MAX_CLIENT_COUNT=5 cargo dc   # 기본 10000명이라 처음�
 
 | 로그 | 의미 |
 |---|---|
-| `게임서버 접속 실패 ... Connection refused (os error 111)` | **로그인 성공**. 9001 에 GameServer 가 없을 뿐이다 |
+| 경고 없이 `[모니터] 로그인서버: 0명 \| 게임서버: 5명 \| 연결끊김: 0명` | **정상**. 로그인·게임서버 인증 모두 성공, KeepAlive 유지 중 (`cargo gs` 쪽은 `[모니터] 동접: 5명`) |
+| `게임서버 접속 실패 ... Connection refused (os error 111)` | **로그인은 성공**. 9001 에 GameServer 가 떠 있지 않다 |
+| `[GameConnectResponse] 게임서버 연결 실패 error_code=1` | 토큰 무효 — 60초 TTL 만료이거나 두 서버의 `auth_token_prefix`/Redis 가 다름 |
 | `[LoginResponse] 로그인 실패 error_code=…` | 계정 없음/비밀번호 불일치 → `--seed` 여부, `dummy_client.password` 확인 |
 | `[오류] 로그인서버 접속 실패, 접속 중단` | `cargo ls` 미실행 또는 `login_server` 주소 오류 |
 
-로그인 서버 쪽 흔적: `redis-cli --scan --pattern 'auth:token:*'` (TTL 60초),
-`accounts.last_login_at` 갱신.
+서버 쪽 흔적: 토큰은 GameServer 가 인증하면서 지우므로 `redis-cli --scan --pattern 'auth:token:*'` 가 비어 있으면
+정상이다 (GameServer 없이 돌렸다면 TTL 60초 동안 남는다). `accounts.last_login_at` 은 로그인 시와 GameServer 연결 종료 시 갱신된다.
 
-#### Windows 의 C# GameServer 까지 붙일 때
+#### Windows 의 C# GameServer 에 붙일 때
 
-Rust GameServer 는 아직 없으므로 게임서버 구간은 Windows 에서 C# GameServer 를 띄워 확인한다.
+Rust GameServer 와 비교하려면 Windows 에서 C# GameServer 를 띄워 붙인다 (이때는 `cargo gs` 를 띄우지 않는다).
 C# GameServer → WSL 의 Redis/MySQL 은 `localhost` 로 되지만, **WSL → Windows 는 WSL2 기본(NAT) 모드에서
 `127.0.0.1` 로 닿지 않는다.** 둘 중 하나로 해결한다.
 

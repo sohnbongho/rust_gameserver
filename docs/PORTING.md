@@ -41,9 +41,10 @@
 |---|---|---|
 | 1 | **LoginServer + AdminApi 7개 컨트롤러** | 구현 완료. 메모리 backend 로 TCP 통합 테스트. 실제 MySQL/Redis·C# 클라이언트와는 미검증 |
 | 2 | **dummy_client** | 구현 완료. Rust LoginServer + 가짜 GameServer 로 흐름 테스트. **실제 GameServer 구간은 미검증** — C# GameServer(9001)에 붙여 확인 필요 |
-| 3 | GameServer | 미착수. 두 C# 서버는 Redis(`auth:token:*`)로만 통신하므로 Rust LoginServer + C# GameServer, C# LoginServer + Rust GameServer 조합 모두 가능 |
+| 3 | **GameServer** | 구현 완료. 메모리 backend 로 TCP 통합 테스트(`crates/game_server/tests/game_flow.rs`). 실제 Redis/MySQL + Rust LoginServer + Rust dummy_client 로 인증·KeepAlive·종료 기록 확인. **C# DummyClient, `scores` INSERT 는 실환경 미검증** |
 
-현재 가능한 인수 테스트: Rust LoginServer + **C# GameServer** + Rust/C# DummyClient.
+현재 가능한 인수 테스트: Rust LoginServer + Rust GameServer + Rust/C# DummyClient. 두 서버는 Redis(`auth:token:*`)로만
+통신하므로 C#/Rust 서버를 섞어 붙여도 된다.
 
 `Client/`(Unity)는 변환 대상 외 — C#으로 유지.
 
@@ -114,6 +115,9 @@ accept 성공 시 **즉시** `ConnectedResponse { index: 0 }` 송신. (`UserObje
 | AdminApi 라우팅 | ASP.NET 은 경로 대소문자 무시, 미들웨어가 라우팅 전에 실행(없는 경로도 키 없으면 401) | axum 은 경로 대소문자 구분, 없는 경로는 404. JSON 속성명은 camelCase 출력 + PascalCase 입력 허용 |
 | DummyClient 비밀번호 | 시드는 `Seeder:Password`, 로그인은 `"Test1234!"` 하드코딩 | 둘 다 `dummy_client.password` 하나로 |
 | DummyClient 접속 실패 | 로그인서버 접속 예외가 루프 밖으로 나가 이후 접속을 중단 | 동일하게 중단하되 에러 로그 후 이미 접속한 클라이언트는 계속 유지 |
+| GameServer `ServerError`(2) | 캐시 워커 채널이 가득 찼을 때만 발생 | 채널이 없으므로 보내지 않음. Redis 오류는 원본과 같이 `ErrorResponse { error_code: 3 }` |
+| GameServer 로그아웃 기록 | `LogoutSqlRequest` 는 critical — 실패 시 500ms×2ⁿ(최대 30초) 재시도, 서버 종료 시 중단 | 동일. 세션 task 안에서 재시도하므로 종료 시 첫 시도까지는 기다린다 |
+| GameServer 인증 결과 중복 | `GameConnectRequest` 를 응답 전에 두 번 보내면 결과 핸들러가 인증 여부를 다시 보지 않는다 | 원본대로 둔다 (정상 클라이언트는 한 번만 보냄) |
 | 로그인 PBKDF2 실행 위치 | SQL 워커 스레드(32개)에서 실행 → 사실상 동시 32개 상한 | `spawn_blocking` + 코어 수 크기의 `Semaphore` |
 
 ## 5. 워크스페이스 구성
@@ -124,9 +128,9 @@ accept 성공 시 **즉시** `ConnectedResponse { index: 0 }` 송신. (`UserObje
 Cargo.toml            # [workspace] members
 crates/
   proto/              # prost-build (build.rs) + message.proto
-  net/                # codec, session id, config, tracing, packet stats(AtomicU64), timer
+  net/                # codec, session id, config, tracing, packet stats(AtomicU64), 송신 outbox, 세션 레지스트리
   db/                 # sqlx MySqlPool, redis ConnectionManager
-  game_server/        # 3단계 (미착수)
+  game_server/        # GameServer (lib + bin, tests/ 에 통합 테스트)
   login_server/       # LoginServer + AdminApi (lib + bin, tests/ 에 통합 테스트)
   dummy_client/       # 부하·인수 테스트 클라이언트 (lib + bin)
 docs/PORTING.md
@@ -154,7 +158,10 @@ C# `appsettings.json`에 MySQL 비밀번호가 **평문으로 커밋되어 있�
 - [x] **한 버퍼에 2개 메시지**를 동시에 넣기 (C#의 버퍼 압축 로직이 존재하는 이유)
 - [x] 본문 크기 `0`, `8191` 거부
 - [x] 인증 전 게이팅: 허용 2종 외 → 종료 (LoginServer: `LoginRequest`/`KeepAliveRequest`)
-- [x] KeepAlive 3초 송신(dummy_client) / 10초 타임아웃(LoginServer, 인증 후만)
+- [x] KeepAlive 3초 송신(dummy_client) / 10초 타임아웃(LoginServer·GameServer, 인증 후만). 테스트는 실제 시간 + 타임아웃 주입
+      (`SessionContext::with_keep_alive_timeout`) — 정지 시계는 소켓 I/O 대기 중에도 시간을 건너뛰어 쓸 수 없다
+- [x] GameServer: 토큰 1회용, `:` 포함 user_id, Redis 오류 → `ErrorResponse{3}`, 인증 전 게이팅, 이동 에코(발신자만),
+      점수 저장, 종료 시 `last_login_at`, 중복 로그인 킥, 로그아웃 재시도 백오프 — `game_server` 테스트
 - [x] PBKDF2-HMAC-SHA256 을 RFC 7914 테스트 벡터로 확인 (C# 가 만든 해시로 교차 검증은 아직)
 - [ ] 실제 MySQL 의 C# 시드 계정으로 Rust LoginServer 로그인 (PBKDF2 호환성 최종 확인)
 - [ ] Rust LoginServer + C# GameServer + C# DummyClient

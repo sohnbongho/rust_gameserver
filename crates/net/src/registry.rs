@@ -1,4 +1,5 @@
 //! 접속 중인 세션 목록과 user_id → 세션 매핑 (C# `UserObjectPoolManager` 의 `_activeSessions` / `_authenticatedSessions`).
+//! LoginServer 와 GameServer 가 같이 쓴다.
 //!
 //! 세션 자체의 상태는 각 세션 task 가 소유한다. 여기에는 AdminApi 조회·강제 종료와 중복 로그인 킥에
 //! 필요한 최소 정보만 둔다.

@@ -30,6 +30,11 @@ redis_key_prefix = "admin:session:"
 tls_cert_path = ""
 tls_key_path = ""
 
+[game_server]
+port = 9001
+# LoginServer 가 발급한 1회용 토큰 키 — [login_server].auth_token_prefix 와 같아야 한다
+auth_token_prefix = "auth:token:"
+
 [dummy_client]
 login_server = "127.0.0.1:9000"
 game_server = "127.0.0.1:9001"

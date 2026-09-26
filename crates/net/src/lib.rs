@@ -1,10 +1,13 @@
-//! 서버 공통 네트워크 계층: 프레이밍 codec, 세션 id, 설정, tracing 초기화, 패킷 통계, 접속 제한, 모니터.
+//! 서버 공통 네트워크 계층: 프레이밍 codec, 세션 id, 설정, tracing 초기화, 패킷 통계, 접속 제한, 모니터,
+//! 세션 송신 경로(outbox)와 세션 레지스트리.
 
 pub mod acceptor;
 pub mod codec;
 pub mod config;
 pub mod consts;
 pub mod monitor;
+pub mod outbox;
+pub mod registry;
 pub mod session_id;
 pub mod stats;
 

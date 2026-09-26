@@ -776,9 +776,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "db",
+ "futures",
  "net",
  "proto",
+ "serde",
+ "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

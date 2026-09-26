@@ -8,5 +8,12 @@ proto.workspace = true
 net.workspace = true
 db.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
