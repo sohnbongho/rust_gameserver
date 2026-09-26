@@ -22,4 +22,6 @@ target
 
 # 로컬 설정 (자격증명 포함 가능) — config.example.toml 만 커밋한다
 config.toml
+# cargo 별칭 파일은 자격증명이 없으므로 커밋 대상
+!.cargo/config.toml
 .env

@@ -1,0 +1,4 @@
+# cargo 별칭 — 워크스페이스에 바이너리가 둘이라 `cargo run` 단독으로는 대상이 정해지지 않는다
+[alias]
+gs = "run -p game_server"
+ls = "run -p login_server"
