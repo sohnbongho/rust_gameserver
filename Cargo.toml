@@ -54,7 +54,10 @@ chrono = { version = "0.4", features = ["serde"] }
 # dummy_client 키보드 입력
 crossterm = "0.29"
 
-# PBKDF2 10만 회는 debug 빌드에서 로그인 1건에 1초 이상 걸린다 — 해시 크레이트만 dev 에서도 최적화한다
+# PBKDF2 10만 회는 debug 빌드에서 로그인 1건에 1초 이상 걸린다 — 해시 크레이트만 dev 에서도 최적화한다.
+# 제네릭(pbkdf2_hmac::<Sha256>)은 호출하는 크레이트에서 단형화되므로 db 크레이트도 포함해야 효과가 있다.
+[profile.dev.package.db]
+opt-level = 3
 [profile.dev.package.sha2]
 opt-level = 3
 [profile.dev.package.hmac]
